@@ -34,7 +34,7 @@ app.use("/api/votes", voteRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
-  res.status(500).json({
+  res.status(err.status || 500).json({
     message: err.message || "Something went chaotic on the server."
   });
 });

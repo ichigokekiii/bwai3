@@ -23,7 +23,9 @@ function AppShell() {
         handleUserUpdated(data);
       })
       .catch((error) => {
-        console.error(error);
+        if (error?.response?.status !== 404) {
+          console.error(error);
+        }
         handleUserUpdated(null);
       });
   }, [demoUserId]);
@@ -50,7 +52,7 @@ function AppShell() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AppShell />
     </BrowserRouter>
   );

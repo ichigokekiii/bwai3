@@ -10,6 +10,27 @@ import {
   updateUser
 } from "../services/api";
 
+const educationLevels = [
+  { value: "elementary", label: "Elementary" },
+  { value: "junior_high", label: "Junior High" },
+  { value: "senior_high", label: "Senior High" },
+  { value: "college", label: "College" },
+  { value: "all_levels", label: "All Levels" }
+];
+
+const alertIntensities = [
+  { value: "chill", label: "Chill" },
+  { value: "normal", label: "Normal" },
+  { value: "panic", label: "Panic" }
+];
+
+const panicPersonalities = [
+  { value: "calm_classmate", label: "Calm Classmate" },
+  { value: "oa_barkada", label: "OA Barkada" },
+  { value: "strict_registrar", label: "Strict Registrar" },
+  { value: "tita_mode", label: "Tita Mode" }
+];
+
 const defaultProfile = {
   full_name: "",
   email: "",
@@ -73,7 +94,7 @@ export default function ProfileSetupPage({ user, onUserUpdated }) {
       setStatus("Profile saved.");
     } catch (error) {
       console.error(error);
-      setStatus("Could not save profile.");
+      setStatus(error.response?.data?.message || error.message || "Could not save profile.");
     }
   }
 
@@ -141,10 +162,7 @@ export default function ProfileSetupPage({ user, onUserUpdated }) {
               ["email", "Email"],
               ["school_name", "School name"],
               ["city", "City"],
-              ["education_level", "Education level"],
-              ["section_or_group", "Section or group"],
-              ["alert_intensity", "Alert intensity"],
-              ["panic_personality", "Panic personality"]
+              ["section_or_group", "Section or group"]
             ].map(([key, label]) => (
               <label key={key} className="text-sm text-stone-700">
                 <span className="mb-2 block font-semibold">{label}</span>
@@ -155,6 +173,51 @@ export default function ProfileSetupPage({ user, onUserUpdated }) {
                 />
               </label>
             ))}
+
+            <label className="text-sm text-stone-700">
+              <span className="mb-2 block font-semibold">Education level</span>
+              <select
+                value={profile.education_level || "college"}
+                onChange={(event) => setProfile((current) => ({ ...current, education_level: event.target.value }))}
+                className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-900 outline-none focus:border-lime-300"
+              >
+                {educationLevels.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-sm text-stone-700">
+              <span className="mb-2 block font-semibold">Alert intensity</span>
+              <select
+                value={profile.alert_intensity || "normal"}
+                onChange={(event) => setProfile((current) => ({ ...current, alert_intensity: event.target.value }))}
+                className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-900 outline-none focus:border-lime-300"
+              >
+                {alertIntensities.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-sm text-stone-700 md:col-span-2">
+              <span className="mb-2 block font-semibold">Panic personality</span>
+              <select
+                value={profile.panic_personality || "oa_barkada"}
+                onChange={(event) => setProfile((current) => ({ ...current, panic_personality: event.target.value }))}
+                className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-900 outline-none focus:border-lime-300"
+              >
+                {panicPersonalities.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <button className="mt-8 rounded-xl bg-stone-900 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-white">

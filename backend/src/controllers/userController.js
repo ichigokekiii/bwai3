@@ -39,6 +39,10 @@ async function createUser(req, res, next) {
     const [user] = await query("SELECT * FROM users WHERE id = ?", [result.insertId]);
     res.status(201).json(user);
   } catch (error) {
+    if (error.code === "ER_DUP_ENTRY") {
+      error.status = 409;
+      error.message = "That email is already in use.";
+    }
     next(error);
   }
 }
@@ -97,6 +101,10 @@ async function updateUser(req, res, next) {
     const [user] = await query("SELECT * FROM users WHERE id = ?", [req.params.id]);
     res.json(user);
   } catch (error) {
+    if (error.code === "ER_DUP_ENTRY") {
+      error.status = 409;
+      error.message = "That email is already in use.";
+    }
     next(error);
   }
 }
