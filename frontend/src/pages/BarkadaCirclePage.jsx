@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   addGroupMember,
@@ -12,6 +13,7 @@ export default function BarkadaCirclePage({ user }) {
   const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
   const [groupName, setGroupName] = useState("3ITE Alert Circle");
+  const [status, setStatus] = useState("");
   const [memberForm, setMemberForm] = useState({
     name: "",
     email: "",
@@ -40,36 +42,66 @@ export default function BarkadaCirclePage({ user }) {
 
   if (!user) {
     return (
-      <div className="mx-auto max-w-5xl px-4 py-10 text-stone-600 md:px-6">
-        Loading barkada circle controls...
+      <div className="mx-auto max-w-5xl px-4 py-10 md:px-6">
+        <div className="rounded-[2.5rem] border border-stone-200 bg-white p-8 shadow-card">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-stone-500">Barkada setup</p>
+          <h1 className="mt-3 font-display text-5xl leading-none text-stone-900">Save the student profile before adding people.</h1>
+          <p className="mt-4 text-sm leading-7 text-stone-600">
+            The barkada page is now separate on purpose, but it still depends on having a saved profile owner first.
+          </p>
+          <Link
+            to="/setup"
+            className="mt-8 inline-flex rounded-full bg-stone-900 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white"
+          >
+            Go to Setup Profile
+          </Link>
+        </div>
       </div>
     );
   }
 
   async function handleCreateGroup() {
-    await createGroup({
-      owner_user_id: user.id,
-      group_name: groupName
-    });
-    await load();
+    try {
+      await createGroup({
+        owner_user_id: user.id,
+        group_name: groupName
+      });
+      setStatus("Barkada group created.");
+      await load();
+    } catch (error) {
+      console.error(error);
+      setStatus(error.response?.data?.message || error.message || "Could not create the barkada group.");
+    }
   }
 
   async function handleAddMember(event) {
     event.preventDefault();
     if (!group) return;
-    await addGroupMember(group.id, memberForm);
-    setMemberForm({
-      name: "",
-      email: "",
-      role: "member",
-      is_opted_in: true
-    });
-    await load();
+    try {
+      await addGroupMember(group.id, memberForm);
+      setMemberForm({
+        name: "",
+        email: "",
+        role: "member",
+        is_opted_in: true
+      });
+      setStatus("Recipient added and ready for alerts.");
+      await load();
+    } catch (error) {
+      console.error(error);
+      setStatus(error.response?.data?.message || error.message || "Could not save the barkada member.");
+    }
   }
 
   async function handleDelete(memberId) {
-    await deleteGroupMember(group.id, memberId);
-    await load();
+    try {
+      await deleteGroupMember(group.id, memberId);
+      setStatus("Recipient removed.");
+      await load();
+    } catch (error) {
+      console.error(error);
+      setStatus(error.response?.data?.message || error.message || "Could not remove the barkada member.");
+    }
   }
 
   return (
@@ -79,7 +111,7 @@ export default function BarkadaCirclePage({ user }) {
           <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-stone-500">Barkada Alert Circle</p>
           <h1 className="mt-3 font-display text-6xl leading-[0.95] text-stone-900">Trusted contacts, clear consent, simple management.</h1>
           <p className="mt-4 text-sm leading-7 text-stone-600">
-            This screen is intentionally easy to read: one area for the circle itself, one area for the member list, and clear language about consent and opt-in.
+            This page is intentionally separate from profile setup so adding people feels like its own focused step.
           </p>
 
           {group ? (
@@ -182,6 +214,8 @@ export default function BarkadaCirclePage({ user }) {
           ) : (
             <p className="mt-5 text-stone-500">Create a group first so your barkada has somewhere to receive alerts responsibly.</p>
           )}
+
+          {status ? <p className="mt-5 text-sm font-semibold text-stone-700">{status}</p> : null}
         </div>
       </motion.div>
     </div>

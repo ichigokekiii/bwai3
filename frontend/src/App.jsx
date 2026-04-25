@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import LandingPage from "./pages/LandingPage";
 import ProfileSetupPage from "./pages/ProfileSetupPage";
+import BarkadaCirclePage from "./pages/BarkadaCirclePage";
 import AnalyzeAnnouncementPage from "./pages/AnalyzeAnnouncementPage";
 import AlertRoomPage from "./pages/AlertRoomPage";
 import { getUser } from "./services/api";
@@ -40,7 +41,7 @@ function AppShell() {
           element={<ProfileSetupPage user={user} onUserUpdated={handleUserUpdated} />}
         />
         <Route path="/profile" element={<ProfileSetupPage user={user} onUserUpdated={handleUserUpdated} />} />
-        <Route path="/barkada" element={<ProfileSetupPage user={user} onUserUpdated={handleUserUpdated} />} />
+        <Route path="/barkada" element={<BarkadaCirclePage user={user} />} />
         <Route path="/panic-check" element={<AnalyzeAnnouncementPage user={user} />} />
         <Route path="/analyze" element={<AnalyzeAnnouncementPage user={user} />} />
         <Route path="/alerts/:alertId" element={<AlertRoomPage user={user} />} />

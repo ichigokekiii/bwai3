@@ -1,7 +1,8 @@
 import { Link, NavLink } from "react-router-dom";
 
 const links = [
-  { to: "/setup", label: "Setup Profile & Group" },
+  { to: "/setup", label: "Setup Profile" },
+  { to: "/barkada", label: "Manage Barkada" },
   { to: "/panic-check", label: "Run Panic Check" }
 ];
 

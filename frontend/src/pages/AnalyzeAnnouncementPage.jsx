@@ -240,12 +240,20 @@ export default function AnalyzeAnnouncementPage({ user }) {
           <p className="mt-4 text-sm leading-7 text-stone-600">
             The AI agent needs the student profile and barkada group before it can decide if the announcement applies and who should be alerted.
           </p>
-          <Link
-            to="/setup"
-            className="mt-8 inline-flex rounded-xl bg-stone-900 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-white"
-          >
-            Go to Setup Profile & Group
-          </Link>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link
+              to="/setup"
+              className="inline-flex rounded-xl bg-stone-900 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-white"
+            >
+              Go to Setup Profile
+            </Link>
+            <Link
+              to="/barkada"
+              className="inline-flex rounded-xl border border-stone-300 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-stone-800"
+            >
+              Manage Barkada
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -328,7 +336,15 @@ export default function AnalyzeAnnouncementPage({ user }) {
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-stone-500">No opted-in recipients yet. Save the profile and add barkada emails first.</p>
+                  <div className="rounded-xl border border-dashed border-stone-300 bg-stone-50 px-4 py-4">
+                    <p className="text-sm text-stone-500">No opted-in recipients yet. Add barkada emails before sending alerts.</p>
+                    <Link
+                      to="/barkada"
+                      className="mt-3 inline-flex rounded-full bg-lime-300 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-stone-900"
+                    >
+                      Open Barkada Page
+                    </Link>
+                  </div>
                 )}
               </div>
             </div>
