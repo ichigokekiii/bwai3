@@ -91,7 +91,7 @@ export default function ProfileSetupPage({ user, onUserUpdated }) {
         ? await updateUser(user.id, profile)
         : await createUser(profile);
       onUserUpdated(saved);
-      setStatus("Profile saved.");
+      setStatus(`Profile saved to database as user #${saved.id}.`);
     } catch (error) {
       console.error(error);
       setStatus(error.response?.data?.message || error.message || "Could not save profile.");
@@ -104,13 +104,18 @@ export default function ProfileSetupPage({ user, onUserUpdated }) {
       return;
     }
 
-    const created = await createGroup({
-      owner_user_id: user.id,
-      group_name: groupName
-    });
-    setGroup(created);
-    setMembers([]);
-    setStatus("Group created.");
+    try {
+      const created = await createGroup({
+        owner_user_id: user.id,
+        group_name: groupName
+      });
+      setGroup(created);
+      setMembers([]);
+      setStatus(`Group saved to database as group #${created.id}.`);
+    } catch (error) {
+      console.error(error);
+      setStatus(error.response?.data?.message || error.message || "Could not create the barkada group.");
+    }
   }
 
   async function handleAddMember(event) {
@@ -120,16 +125,21 @@ export default function ProfileSetupPage({ user, onUserUpdated }) {
       return;
     }
 
-    await addGroupMember(group.id, memberForm);
-    const data = await getGroupMembers(group.id);
-    setMembers(data);
-    setMemberForm({
-      name: "",
-      email: "",
-      role: "member",
-      is_opted_in: true
-    });
-    setStatus("Member added.");
+    try {
+      await addGroupMember(group.id, memberForm);
+      const data = await getGroupMembers(group.id);
+      setMembers(data);
+      setMemberForm({
+        name: "",
+        email: "",
+        role: "member",
+        is_opted_in: true
+      });
+      setStatus("Member saved to database and ready for alerts.");
+    } catch (error) {
+      console.error(error);
+      setStatus(error.response?.data?.message || error.message || "Could not save the barkada member.");
+    }
   }
 
   async function handleDeleteMember(memberId) {

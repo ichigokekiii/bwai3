@@ -1,6 +1,13 @@
 require("dotenv").config();
 
 const VALID_ALERT_LEVELS = new Set(["none", "chill", "normal", "panic"]);
+const VALID_CONTINUITY_MODES = new Set([
+  "none",
+  "suspended",
+  "online",
+  "asynchronous",
+  "evm"
+]);
 
 function env(...keys) {
   for (const key of keys) {
@@ -21,19 +28,30 @@ function getTodayString() {
   }).format(new Date());
 }
 
-function getPersonalityMessage(personality, summary, urgent) {
+function getPersonalityMessage(personality, summary, urgent, continuityMode = "suspended") {
+  const remoteReminder =
+    continuityMode === "online" || continuityMode === "asynchronous" || continuityMode === "evm"
+      ? " Do not go to school. Classes continue remotely."
+      : "";
+
   const variants = {
     calm_classmate: urgent
-      ? "Classes appear to be suspended today. Please check the announcement and confirm."
+      ? `Do not go to school yet. Please check the announcement and confirm.${remoteReminder}`
       : "May nakita akong update. Double-check natin bago ka bumiyahe.",
     oa_barkada: urgent
-      ? "GISING!!! WALANG PASOK ATA. 'WAG KA NA MALIGO, CHECK MO MUNA!"
+      ? continuityMode === "online" || continuityMode === "asynchronous" || continuityMode === "evm"
+        ? "GISING!!! HUWAG KA MUNA PUMASOK. ONLINE O EVM LANG ATA TODAY, CHECK MO AGAD!"
+        : "GISING!!! WALANG PASOK ATA. 'WAG KA NA MALIGO, CHECK MO MUNA!"
       : "Beh may chika about class suspension. Check mo muna bago ka mag-commute.",
     strict_registrar: urgent
-      ? "Official class suspension detected. Please acknowledge this notice immediately."
+      ? continuityMode === "online" || continuityMode === "asynchronous" || continuityMode === "evm"
+        ? "On-campus classes are suspended. Do not report to school; continue classes through the announced remote mode."
+        : "Official class suspension detected. Please acknowledge this notice immediately."
       : "Announcement requires verification. Review the notice before leaving for school.",
     tita_mode: urgent
-      ? "Anak, mukhang walang pasok. Pakicheck bago ka umalis ha."
+      ? continuityMode === "online" || continuityMode === "asynchronous" || continuityMode === "evm"
+        ? "Anak, huwag ka munang pumasok sa school. Mukhang online o EVM ang classes, pakicheck agad."
+        : "Anak, mukhang walang pasok. Pakicheck bago ka umalis ha."
       : "Anak, may announcement na kailangang i-confirm. Ingat bago bumiyahe."
   };
 
@@ -44,10 +62,29 @@ function normalizeLevel(level = "") {
   return String(level).toLowerCase().replace(/\s+/g, "_");
 }
 
-function buildPrompt({ user, announcementText, sourceName, sourceUrl, sourceType }) {
+function hasImagePayload(payload = {}) {
+  return Boolean(payload.imageBase64 && payload.imageMimeType);
+}
+
+function buildGeminiParts(promptText, payload = {}) {
+  const parts = [{ text: promptText }];
+
+  if (hasImagePayload(payload)) {
+    parts.push({
+      inlineData: {
+        mimeType: payload.imageMimeType,
+        data: payload.imageBase64
+      }
+    });
+  }
+
+  return parts;
+}
+
+function buildPrompt({ user, announcementText, sourceName, sourceUrl, sourceType, imageBase64 }) {
   return `You are an AI announcement verification agent for students in the Philippines.
 
-Your task is to analyze a possible class suspension announcement and decide if it is relevant to the user.
+Your task is to analyze a possible school disruption announcement and decide if it is relevant to the user.
 
 User profile:
 - School: ${user.school_name}
@@ -60,6 +97,9 @@ User profile:
 Announcement:
 ${announcementText}
 
+Attached image:
+${imageBase64 ? "Yes. Read the announcement text from the image too and use it in your decision." : "No image attached."}
+
 Source:
 - Source name: ${sourceName || ""}
 - Source URL: ${sourceUrl || ""}
@@ -68,13 +108,14 @@ Source:
 Analyze the announcement carefully.
 
 You must determine:
-1. Is this about class suspension or no classes?
+1. Is this about class suspension, no on-campus classes, asynchronous learning, online class, or EVM?
 2. Does it apply to the user’s city, school, or education level?
 3. Does it appear official or suspicious?
 4. What date is covered?
 5. What alert level should be triggered?
-6. What short message should be shown to the student?
-7. Generate the alert message based on the chosen alert personality.
+6. If students should stay home but continue classes online/asynchronously/EVM, make that explicit.
+7. What short message should be shown to the student?
+8. Generate the alert message based on the chosen alert personality.
 
 Return JSON only. Do not include markdown. Do not include explanations outside the JSON.
 
@@ -85,6 +126,8 @@ JSON format:
   "isLikelyOfficial": true,
   "confidenceScore": 95,
   "alertLevel": "panic",
+  "classContinuityMode": "suspended",
+  "attendanceAdvice": "Do not go to school today.",
   "affectedLocation": "Manila",
   "affectedSchools": "All schools",
   "affectedLevels": "All levels",
@@ -99,13 +142,37 @@ JSON format:
 
 Rules:
 - alertLevel must be one of: none, chill, normal, panic.
-- If not class suspension, use alertLevel none.
+- classContinuityMode must be one of: none, suspended, online, asynchronous, evm.
+- If the notice says students should not physically report to school but should continue learning online, asynchronously, or through EVM, treat it as relevant disruption and explain that they should stay home.
+- If not class suspension or no-campus disruption, use alertLevel none.
 - If relevant but unclear, use normal.
 - If official, relevant, and urgent, use panic.
 - If confidence is below 60, do not use panic.
 - possibleIssues must be an array of strings.
 - alertMessage must match the user’s selected panic_personality.
 - Do not make claims that the announcement is 100% official unless the source strongly supports it.`;
+}
+
+function buildImageExtractionPrompt() {
+  return `You are extracting text from a screenshot or image of a school announcement.
+
+Read the image carefully and extract the readable text as accurately as possible.
+Keep line breaks when they help readability.
+
+Return JSON only in this format:
+{
+  "extractedText": "..."
+}`;
+}
+
+function parseJsonFromModelContent(content) {
+  const normalized = String(content || "")
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  return JSON.parse(normalized);
 }
 
 function heuristicAnalysis({ user, announcementText, sourceName, sourceType }) {
@@ -115,8 +182,15 @@ function heuristicAnalysis({ user, announcementText, sourceName, sourceType }) {
   const level = normalizeLevel(user.education_level);
   const issues = [];
 
+  const mentionsAsync = /(asynchronous|async(?:hronous)? learning|modules?|modular)/i.test(text);
+  const mentionsOnline = /(online class(?:es)?|online learning|remote class(?:es)?|distance learning|virtual class(?:es)?)/i.test(text);
+  const mentionsEvm = /\bevm\b|enriched virtual mode/i.test(text);
+  const remoteMode =
+    mentionsEvm ? "evm" : mentionsAsync ? "asynchronous" : mentionsOnline ? "online" : "none";
+
   const isClassSuspension =
-    /(walang pasok|class(?:es)?\s+(?:are\s+)?suspend|no classes|suspension)/i.test(text);
+    /(walang pasok|class(?:es)?\s+(?:are\s+)?suspend|no classes|suspension)/i.test(text) ||
+    remoteMode !== "none";
   const cityMatch = city && text.includes(city);
   const schoolMatch = school && text.includes(school);
   const allLevels = /(all levels|all students|public and private schools)/i.test(text);
@@ -157,6 +231,16 @@ function heuristicAnalysis({ user, announcementText, sourceName, sourceType }) {
     alertLevel = "normal";
   }
 
+  const continuityMode = remoteMode !== "none" ? remoteMode : "suspended";
+  const attendanceAdvice =
+    continuityMode === "asynchronous"
+      ? "Do not go to school. Classes continue through asynchronous learning."
+      : continuityMode === "online"
+        ? "Do not go to school. Classes continue online."
+        : continuityMode === "evm"
+          ? "Do not go to school. Classes continue through EVM or another virtual setup."
+          : "Do not go to school if this suspension applies to you.";
+
   const reasonMatch =
     announcementText.match(/due to ([^.]+)/i) ||
     announcementText.match(/because of ([^.]+)/i) ||
@@ -164,7 +248,9 @@ function heuristicAnalysis({ user, announcementText, sourceName, sourceType }) {
   const reason = reasonMatch ? reasonMatch[1].trim() : "Unspecified local disruption";
   const summaryForStudent = isClassSuspension
     ? relevant
-      ? "Walang Pasok detected for your setup. Please confirm before leaving."
+      ? continuityMode === "suspended"
+        ? "No on-campus classes detected for your setup. Please confirm before leaving."
+        : `${attendanceAdvice} Please confirm the announcement before leaving.`
       : "A class suspension was mentioned, but it may not apply to you."
     : "This announcement does not look like a class suspension notice.";
 
@@ -176,6 +262,8 @@ function heuristicAnalysis({ user, announcementText, sourceName, sourceType }) {
     isLikelyOfficial: likelyOfficial,
     confidenceScore: confidence,
     alertLevel,
+    classContinuityMode: continuityMode,
+    attendanceAdvice,
     affectedLocation: cityMatch ? user.city : "Unclear",
     affectedSchools: schoolMatch ? user.school_name : allLevels ? "All schools" : "Unclear",
     affectedLevels: allLevels ? "All levels" : user.education_level,
@@ -192,7 +280,12 @@ function heuristicAnalysis({ user, announcementText, sourceName, sourceType }) {
         : alertLevel === "normal"
           ? "Review manually before alerting the barkada."
           : "No automatic alert recommended.",
-    alertMessage: getPersonalityMessage(user.panic_personality, summaryForStudent, urgent)
+    alertMessage: getPersonalityMessage(
+      user.panic_personality,
+      summaryForStudent,
+      urgent,
+      continuityMode
+    )
   }, user);
 }
 
@@ -201,6 +294,11 @@ function sanitizeResult(raw, user = {}) {
   const isClassSuspension = Boolean(result.isClassSuspension);
   const confidenceScore = Math.max(0, Math.min(100, Number(result.confidenceScore || 0)));
   let alertLevel = VALID_ALERT_LEVELS.has(result.alertLevel) ? result.alertLevel : "none";
+  const classContinuityMode = VALID_CONTINUITY_MODES.has(result.classContinuityMode)
+    ? result.classContinuityMode
+    : isClassSuspension
+      ? "suspended"
+      : "none";
 
   if (!isClassSuspension) {
     alertLevel = "none";
@@ -216,6 +314,18 @@ function sanitizeResult(raw, user = {}) {
     isLikelyOfficial: Boolean(result.isLikelyOfficial),
     confidenceScore,
     alertLevel,
+    classContinuityMode,
+    attendanceAdvice:
+      result.attendanceAdvice ||
+      (classContinuityMode === "asynchronous"
+        ? "Do not go to school. Classes continue through asynchronous learning."
+        : classContinuityMode === "online"
+          ? "Do not go to school. Classes continue online."
+          : classContinuityMode === "evm"
+            ? "Do not go to school. Classes continue through EVM or another virtual setup."
+            : isClassSuspension
+              ? "Do not go to school if this announcement applies to you."
+              : ""),
     affectedLocation: result.affectedLocation || "",
     affectedSchools: result.affectedSchools || "",
     affectedLevels: result.affectedLevels || "",
@@ -230,7 +340,8 @@ function sanitizeResult(raw, user = {}) {
       getPersonalityMessage(
         user.panic_personality,
         result.summaryForStudent || "Possible class suspension detected.",
-        alertLevel === "panic"
+        alertLevel === "panic",
+        classContinuityMode
       )
   };
 }
@@ -272,7 +383,7 @@ async function analyzeAnnouncementWithModel(payload) {
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;
-  return sanitizeResult(JSON.parse(content), payload.user);
+  return sanitizeResult(parseJsonFromModelContent(content), payload.user);
 }
 
 async function analyzeAnnouncementWithGemini(payload) {
@@ -289,11 +400,7 @@ async function analyzeAnnouncementWithGemini(payload) {
     body: JSON.stringify({
       contents: [
         {
-          parts: [
-            {
-              text: buildPrompt(payload)
-            }
-          ]
+          parts: buildGeminiParts(buildPrompt(payload), payload)
         }
       ],
       generationConfig: {
@@ -318,6 +425,50 @@ async function analyzeAnnouncementWithGemini(payload) {
   }
 
   return sanitizeResult(JSON.parse(content), payload.user);
+}
+
+async function extractTextFromImageWithGemini(payload) {
+  const apiKey = env("GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY");
+  const model = env("GEMINI_MODEL") || "gemini-2.5-flash";
+  const baseUrl = env("GEMINI_API_URL") || "https://generativelanguage.googleapis.com/v1beta";
+
+  const response = await fetch(`${baseUrl}/models/${model}:generateContent`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: buildGeminiParts(buildImageExtractionPrompt(), payload)
+        }
+      ],
+      generationConfig: {
+        temperature: 0.1
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Gemini OCR error: ${response.status} ${text}`);
+  }
+
+  const data = await response.json();
+  const content = data.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text || "")
+    .join("")
+    .trim();
+
+  if (!content) {
+    throw new Error("Gemini OCR returned an empty response.");
+  }
+
+  const parsed = parseJsonFromModelContent(content);
+  return {
+    extractedText: String(parsed.extractedText || "").trim()
+  };
 }
 
 async function analyzeAnnouncement(payload) {
@@ -355,7 +506,43 @@ async function analyzeAnnouncement(payload) {
   }
 }
 
+async function extractTextFromImage(payload) {
+  const provider = (env("AI_PROVIDER") || "").toLowerCase();
+  const hasGeminiKey = Boolean(env("GEMINI_API_KEY", "GOOGLE_API_KEY"));
+  const shouldMock = process.env.USE_MOCK_AI === "true" || !hasGeminiKey;
+
+  if (shouldMock) {
+    return {
+      extractedText: "",
+      mode: "mock",
+      warning: "Image OCR needs a live Gemini key."
+    };
+  }
+
+  try {
+    if (provider === "gemini" || hasGeminiKey) {
+      return {
+        ...(await extractTextFromImageWithGemini(payload)),
+        mode: "gemini"
+      };
+    }
+
+    return {
+      extractedText: "",
+      mode: "unsupported",
+      warning: "Image OCR is currently enabled for Gemini mode."
+    };
+  } catch (error) {
+    return {
+      extractedText: "",
+      mode: "fallback",
+      warning: error.message
+    };
+  }
+}
+
 module.exports = {
   analyzeAnnouncement,
-  buildPrompt
+  buildPrompt,
+  extractTextFromImage
 };

@@ -1,7 +1,6 @@
 import { Link, NavLink } from "react-router-dom";
 
 const links = [
-  { to: "/", label: "Home", end: true },
   { to: "/setup", label: "Setup Profile & Group" },
   { to: "/panic-check", label: "Run Panic Check" }
 ];

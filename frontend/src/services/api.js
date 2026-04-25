@@ -54,6 +54,11 @@ export async function analyzeAnnouncement(payload) {
   return data;
 }
 
+export async function extractImageText(payload) {
+  const { data } = await api.post("/ai/extract-image-text", payload);
+  return data;
+}
+
 export async function startAlert(payload) {
   const { data } = await api.post("/alerts/start", payload);
   return data;

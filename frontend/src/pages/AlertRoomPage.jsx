@@ -23,6 +23,10 @@ export default function AlertRoomPage({ user }) {
   const [alert, setAlert] = useState(null);
   const [votes, setVotes] = useState([]);
   const [now, setNow] = useState(Date.now());
+  const [overlayDismissed, setOverlayDismissed] = useState(false);
+  const [browserMuted, setBrowserMuted] = useState(false);
+  const [actionStatus, setActionStatus] = useState("");
+  const [isActing, setIsActing] = useState(false);
   const recipientEmail = searchParams.get("recipient") || user?.email || "";
 
   async function load() {
@@ -47,7 +51,8 @@ export default function AlertRoomPage({ user }) {
     if (!alert) return;
 
     let notifyInterval;
-    const shouldPanic = alert.status === "active" && alert.alert_level === "panic";
+    const shouldPanic =
+      alert.status === "active" && alert.alert_level === "panic" && !browserMuted;
 
     async function armPanicMode() {
       const permission = await requestBrowserNotificationPermission();
@@ -76,7 +81,21 @@ export default function AlertRoomPage({ user }) {
       if (notifyInterval) clearInterval(notifyInterval);
       stopAlarmLoop();
     };
-  }, [alert]);
+  }, [alert, browserMuted]);
+
+  useEffect(() => {
+    if (!alert) return;
+
+    if (alert.status !== "active") {
+      setOverlayDismissed(true);
+      setBrowserMuted(true);
+      stopAlarmLoop();
+      return;
+    }
+
+    setOverlayDismissed(false);
+    setBrowserMuted(false);
+  }, [alert?.id, alert?.status]);
 
   const countdown = useMemo(() => {
     if (!alert?.started_at || alert.status !== "active") {
@@ -99,13 +118,68 @@ export default function AlertRoomPage({ user }) {
   const finalConfidence = Math.max(0, Math.min(100, (alert?.analysis?.confidenceScore || 0) + barkadaBoost));
 
   async function handleAcknowledge() {
-    await acknowledgeAlert(alertId, recipientEmail);
-    await load();
+    setIsActing(true);
+    setActionStatus("Acknowledging alert...");
+    setOverlayDismissed(true);
+    setBrowserMuted(true);
+    stopAlarmLoop();
+
+    setAlert((current) =>
+      current
+        ? {
+            ...current,
+            status: "acknowledged"
+          }
+        : current
+    );
+
+    try {
+      await acknowledgeAlert(alertId, recipientEmail);
+      await load();
+      setActionStatus("Alert acknowledged. Panic mode is now off.");
+    } catch (error) {
+      console.error(error);
+      setActionStatus(error.response?.data?.message || error.message || "Could not acknowledge alert.");
+      await load();
+    } finally {
+      setIsActing(false);
+    }
   }
 
   async function handleStop() {
-    await stopAlert(alertId);
-    await load();
+    setIsActing(true);
+    setActionStatus("Stopping alarm...");
+    setOverlayDismissed(true);
+    setBrowserMuted(true);
+    stopAlarmLoop();
+
+    setAlert((current) =>
+      current
+        ? {
+            ...current,
+            status: "stopped"
+          }
+        : current
+    );
+
+    try {
+      await stopAlert(alertId);
+      await load();
+      setActionStatus("Alarm stopped. Panic mode is now off.");
+    } catch (error) {
+      console.error(error);
+      setActionStatus(error.response?.data?.message || error.message || "Could not stop alarm.");
+      await load();
+    } finally {
+      setIsActing(false);
+    }
+  }
+
+  function handleMuteBrowser() {
+    setBrowserMuted(true);
+    setOverlayDismissed(true);
+    stopAlarmLoop();
+    setActionStatus("Browser sound and overlay muted on this device. The alert stays active until acknowledged or expired.");
   }
 
   if (!alert) {
@@ -119,9 +193,27 @@ export default function AlertRoomPage({ user }) {
   return (
     <div className="mx-auto max-w-7xl px-4 pb-16 pt-8 md:px-6">
       <AlarmOverlay
-        active={alert.status === "active" && alert.alert_level === "panic"}
+        active={alert.status === "active" && alert.alert_level === "panic" && !overlayDismissed}
         title="Gising check in progress"
-        subtitle="Persistent opt-in alerts only. No spam gremlin behavior allowed."
+        subtitle="Open from email, confirm you saw it, then turn off the panic mode here."
+        actions={
+          <>
+            <button
+              onClick={handleAcknowledge}
+              disabled={isActing}
+              className="rounded-full bg-lime-300 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-stone-900 disabled:opacity-50"
+            >
+              I Saw It, Turn It Off
+            </button>
+            <button
+              onClick={handleMuteBrowser}
+              disabled={isActing}
+              className="rounded-full border border-stone-300 bg-white px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-stone-800 disabled:opacity-50"
+            >
+              Mute This Browser
+            </button>
+          </>
+        }
       />
 
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="rounded-[2.5rem] border border-white/80 bg-white/88 p-6 shadow-card">
@@ -129,15 +221,31 @@ export default function AlertRoomPage({ user }) {
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-stone-500">Alert room</p>
             <h1 className="mt-3 font-display text-6xl leading-[0.95] text-stone-900">
-              {alert.analysis?.isClassSuspension ? "Walang Pasok detected." : "Alert still under review."}
+              {alert.analysis?.classContinuityMode &&
+              alert.analysis.classContinuityMode !== "suspended" &&
+              alert.analysis.classContinuityMode !== "none"
+                ? "No on-campus classes. Remote mode detected."
+                : alert.analysis?.isClassSuspension
+                  ? "Walang Pasok detected."
+                  : "Alert still under review."}
             </h1>
             <p className="mt-4 max-w-3xl text-lg leading-8 text-stone-600">{alert.analysis?.summaryForStudent}</p>
+            {alert.analysis?.attendanceAdvice ? (
+              <p className="mt-3 max-w-3xl text-base leading-7 text-amber-700">
+                {alert.analysis.attendanceAdvice}
+              </p>
+            ) : null}
+            {recipientEmail ? (
+              <p className="mt-3 inline-flex rounded-full bg-stone-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-stone-600">
+                Opened from email: {recipientEmail}
+              </p>
+            ) : null}
           </div>
           <div className="space-y-3 rounded-[1.8rem] border border-stone-200 bg-stone-50/90 px-5 py-4">
             <AlertLevelBadge level={alert.alert_level} />
             <p className="text-sm text-stone-600">Countdown: {countdown}</p>
             <p className="text-xs uppercase tracking-[0.2em] text-stone-500">
-              Legend: repeats every {alert.repeat_seconds || 30}s and auto-stops after {alert.max_minutes || 5} min.
+              Legend: browser/audio reminders repeat every {alert.repeat_seconds || 30}s and auto-stop after {alert.max_minutes || 5} min.
             </p>
           </div>
         </div>
@@ -178,18 +286,28 @@ export default function AlertRoomPage({ user }) {
             <p className="mt-3 text-sm leading-7 text-stone-600">
               Use `I'm Awake / I Saw It` when the student or recipient has confirmed the alert. Use `Stop Alarm` when the situation is handled and the sound should end.
             </p>
+            {actionStatus ? <p className="mt-3 text-sm font-semibold text-stone-700">{actionStatus}</p> : null}
             <div className="mt-5 flex flex-wrap gap-3">
               <button
                 onClick={handleAcknowledge}
-                className="rounded-full bg-stone-900 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white"
+                disabled={isActing}
+                className="rounded-full bg-lime-300 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-stone-900 disabled:opacity-50"
               >
-                I'm Awake / I Saw It
+                I've Seen It, Turn Off Alerts
               </button>
               <button
                 onClick={handleStop}
-                className="rounded-full bg-lime-300 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-stone-900"
+                disabled={isActing}
+                className="rounded-full bg-stone-900 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white disabled:opacity-50"
               >
-                Stop Alarm
+                Stop Alarm Only
+              </button>
+              <button
+                onClick={handleMuteBrowser}
+                disabled={isActing || browserMuted}
+                className="rounded-full border border-stone-300 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-stone-800 disabled:opacity-50"
+              >
+                Mute This Browser
               </button>
             </div>
           </div>

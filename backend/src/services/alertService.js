@@ -75,12 +75,19 @@ async function getUserAndGroupRecipients(connection, userId, groupId, shouldNoti
 }
 
 function mapAnalysisRecord(record) {
+  const rawJson =
+    typeof record.raw_json === "string"
+      ? JSON.parse(record.raw_json || "{}")
+      : record.raw_json || {};
+
   return {
     isClassSuspension: Boolean(record.is_class_suspension),
     isRelevantToUser: Boolean(record.is_relevant_to_user),
     isLikelyOfficial: Boolean(record.is_likely_official),
     confidenceScore: record.confidence_score,
     alertLevel: record.alert_level,
+    classContinuityMode: rawJson.classContinuityMode || "suspended",
+    attendanceAdvice: rawJson.attendanceAdvice || "",
     affectedLocation: record.affected_location,
     affectedSchools: record.affected_schools,
     affectedLevels: record.affected_levels,
@@ -92,6 +99,18 @@ function mapAnalysisRecord(record) {
     recommendedAction: record.recommended_action,
     alertMessage: record.alert_message
   };
+}
+
+function formatManilaDateTime(value) {
+  return new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  }).format(new Date(value));
 }
 
 function formatDeliveryError(error) {
@@ -135,8 +154,10 @@ async function startAlertWorkflow({
   const analysis = mapAnalysisRecord(analysisRecord);
   const shouldNotifyGroup =
     alertLevel === "panic" && analysis.confidenceScore >= 60 && Boolean(groupId);
-  const safeRepeatSeconds = Math.max(15, Number(repeatSeconds || process.env.ALERT_REPEAT_SECONDS || 30));
+  const safeRepeatSeconds = Math.max(1, Number(repeatSeconds || process.env.ALERT_REPEAT_SECONDS || 30));
   const safeMaxMinutes = Math.max(1, Math.min(10, Number(maxMinutes || process.env.ALERT_MAX_MINUTES || 5)));
+  const startedAt = new Date();
+  const endsAt = new Date(startedAt.getTime() + safeMaxMinutes * 60 * 1000);
 
   if (analysis.confidenceScore < 60 && groupId && alertLevel === "panic") {
     throw new Error("Low confidence announcements cannot trigger automatic barkada panic alerts.");
@@ -204,7 +225,10 @@ async function startAlertWorkflow({
           recipientEmail: recipient.email,
           analysis,
           alertLevel,
-          alertId
+          alertId,
+          repeatSeconds: safeRepeatSeconds,
+          maxMinutes: safeMaxMinutes,
+          endsAt
         });
 
         await query(
@@ -252,11 +276,15 @@ async function startAlertWorkflow({
       alertLevel,
       shouldNotifyGroup,
       recipients: sentRecipients,
+      recipientCount: recipients.length,
       sentCount,
       failedCount,
       deliveryStatus: failedCount > 0 ? "partial_success" : "success",
       repeatSeconds: safeRepeatSeconds,
-      maxMinutes: safeMaxMinutes
+      maxMinutes: safeMaxMinutes,
+      startedAt: startedAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+      endsAtLabel: `${formatManilaDateTime(endsAt)} (Manila time)`
     };
   } catch (error) {
     if (!committed) {

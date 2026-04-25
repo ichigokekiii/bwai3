@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { analyzeAnnouncement, createVote, getUserGroups, startAlert } from "../services/api";
+import {
+  analyzeAnnouncement,
+  createVote,
+  extractImageText,
+  getGroupMembers,
+  getUserGroups,
+  startAlert
+} from "../services/api";
 
 const demoAnnouncement =
   "Due to continuous heavy rainfall, classes in all levels, public and private schools in the City of Manila are suspended today.";
@@ -13,7 +20,11 @@ const durationOptions = [
 
 export default function AnalyzeAnnouncementPage({ user }) {
   const [groups, setGroups] = useState([]);
+  const [members, setMembers] = useState([]);
   const [photoName, setPhotoName] = useState("");
+  const [imagePayload, setImagePayload] = useState(null);
+  const [imageText, setImageText] = useState("");
+  const [ocrStatus, setOcrStatus] = useState("");
   const [form, setForm] = useState({
     announcementText: demoAnnouncement,
     sourceName: "City of Manila",
@@ -26,15 +37,127 @@ export default function AnalyzeAnnouncementPage({ user }) {
   const [resultModal, setResultModal] = useState(null);
   const [alertSettings, setAlertSettings] = useState({
     maxMinutes: 5,
-    repeatSeconds: 30
+    repeatSeconds: 1
   });
 
   useEffect(() => {
     if (!user?.id) return;
-    getUserGroups(user.id).then(setGroups);
+
+    async function loadRecipients() {
+      const data = await getUserGroups(user.id);
+      setGroups(data);
+
+      if (data[0]?.id) {
+        const memberData = await getGroupMembers(data[0].id);
+        setMembers(memberData);
+      } else {
+        setMembers([]);
+      }
+    }
+
+    loadRecipients();
   }, [user?.id]);
 
   const canAlertEveryone = useMemo(() => Boolean(groups[0]?.id && result?.analysis), [groups, result]);
+  const optedInMembers = useMemo(
+    () => members.filter((member) => Boolean(member.is_opted_in)),
+    [members]
+  );
+  const recipientPreview = useMemo(() => {
+    const list = [];
+
+    if (user?.email) {
+      list.push({
+        label: `${user.full_name} (profile owner)`,
+        email: user.email
+      });
+    }
+
+    for (const member of optedInMembers) {
+      if (!list.some((entry) => entry.email === member.email)) {
+        list.push({
+          label: member.name,
+          email: member.email
+        });
+      }
+    }
+
+    return list;
+  }, [optedInMembers, user?.email, user?.full_name]);
+
+  function mergeDetectedText(currentText, detectedText) {
+    const marker = "\n\n[Detected from image]\n";
+    const normalizedCurrent = currentText || "";
+
+    if (!detectedText) {
+      return normalizedCurrent;
+    }
+
+    if (!normalizedCurrent.trim() || normalizedCurrent.trim() === demoAnnouncement.trim()) {
+      return detectedText;
+    }
+
+    if (normalizedCurrent.includes(marker)) {
+      return `${normalizedCurrent.split(marker)[0].trimEnd()}${marker}${detectedText}`;
+    }
+
+    if (normalizedCurrent.includes(detectedText)) {
+      return normalizedCurrent;
+    }
+
+    return `${normalizedCurrent}${marker}${detectedText}`;
+  }
+
+  async function handlePhotoChange(event) {
+    const file = event.target.files?.[0];
+    setPhotoName(file?.name || "");
+
+    if (!file) {
+      setImagePayload(null);
+      setImageText("");
+      setOcrStatus("");
+      return;
+    }
+
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Could not read the selected image."));
+      reader.readAsDataURL(file);
+    });
+
+    const imageBase64 = dataUrl.split(",")[1] || "";
+    setImagePayload({
+      imageBase64,
+      imageMimeType: file.type || "image/jpeg"
+    });
+
+    setOcrStatus("Detecting text from image...");
+
+    try {
+      const data = await extractImageText({
+        imageBase64,
+        imageMimeType: file.type || "image/jpeg"
+      });
+      const detectedText = (data.extractedText || "").trim();
+
+      setImageText(detectedText);
+      setOcrStatus(
+        detectedText
+          ? "Text detected from image and added to the announcement box."
+          : data.warning || "No readable text was detected from the image."
+      );
+      if (detectedText) {
+        setForm((current) => ({
+          ...current,
+          announcementText: mergeDetectedText(current.announcementText, detectedText)
+        }));
+      }
+    } catch (error) {
+      console.error(error);
+      setOcrStatus(error.response?.data?.message || error.message || "Image text detection failed.");
+    }
+  }
 
   async function handleAnalyze(event) {
     event.preventDefault();
@@ -43,7 +166,8 @@ export default function AnalyzeAnnouncementPage({ user }) {
     try {
       const data = await analyzeAnnouncement({
         userId: user.id,
-        ...form
+        ...form,
+        ...(imagePayload || {})
       });
       setResult(data);
       setStatus("AI check complete.");
@@ -80,15 +204,15 @@ export default function AnalyzeAnnouncementPage({ user }) {
 
       setShowAlertModal(false);
       setStatus(
-        `Alert #${data.alertId} sent. Reminders repeat every ${data.repeatSeconds} seconds for up to ${data.maxMinutes} minute(s).`
+        `Alert #${data.alertId} sent to ${data.sentCount}/${data.recipientCount} recipient(s). Browser/audio reminders repeat every ${data.repeatSeconds} second(s) until ${data.endsAtLabel}.`
       );
       setResultModal({
         type: data.deliveryStatus === "partial_success" ? "success" : "success",
         title: data.deliveryStatus === "partial_success" ? "Alert sent with some delivery issues" : "Alert sent successfully",
         body:
           data.deliveryStatus === "partial_success"
-            ? `At least ${data.sentCount} email(s) were accepted, but ${data.failedCount} failed. Check recipient statuses in the alert room.`
-            : `Email delivery was accepted for ${data.sentCount} recipient(s). Reminders will continue for ${data.maxMinutes} minute(s).`
+            ? `At least ${data.sentCount} email(s) were accepted, but ${data.failedCount} failed. The alert window stays active until ${data.endsAtLabel}.`
+            : `Email delivery was accepted for ${data.sentCount} recipient(s). Browser/audio reminders repeat every ${data.repeatSeconds} second(s) until ${data.endsAtLabel}.`
       });
     } catch (error) {
       console.error(error);
@@ -134,7 +258,7 @@ export default function AnalyzeAnnouncementPage({ user }) {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           onSubmit={handleAnalyze}
-          className="rounded-3xl border border-stone-200 bg-white p-8 shadow-card"
+          className="rounded-3xl border border-stone-200 bg-white p-8 shadow-card xl:flex xl:h-[calc(100vh-12rem)] xl:min-h-[760px] xl:flex-col xl:overflow-hidden"
         >
           <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">Run panic check</p>
           <h1 className="mt-4 font-display text-5xl leading-none text-stone-900">
@@ -144,19 +268,29 @@ export default function AnalyzeAnnouncementPage({ user }) {
             This is the second main button in the app. The order is simple: upload photo, run AI, vote if needed, alert everybody.
           </p>
 
-          <div className="mt-8 space-y-4">
+          <div className="mt-8 space-y-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-2">
             <label className="block">
               <span className="mb-2 block text-sm font-semibold text-stone-700">Upload photo</span>
               <input
                 type="file"
                 accept="image/*"
-                onChange={(event) => setPhotoName(event.target.files?.[0]?.name || "")}
+                onChange={handlePhotoChange}
                 className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700"
               />
               <p className="mt-2 text-xs uppercase tracking-[0.18em] text-stone-500">
                 {photoName || "Optional screenshot for reference"}
               </p>
+              {ocrStatus ? <p className="mt-2 text-sm text-stone-600">{ocrStatus}</p> : null}
             </label>
+
+            {imageText ? (
+              <div className="rounded-2xl border border-lime-300 bg-lime-50 p-5">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-600">Detected image text</p>
+                <div className="mt-3 max-h-52 overflow-y-auto pr-2">
+                  <p className="whitespace-pre-wrap text-sm leading-7 text-stone-700">{imageText}</p>
+                </div>
+              </div>
+            ) : null}
 
             <label className="block">
               <span className="mb-2 block text-sm font-semibold text-stone-700">Announcement text</span>
@@ -176,9 +310,31 @@ export default function AnalyzeAnnouncementPage({ user }) {
                 className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-900 outline-none focus:border-lime-300"
               />
             </label>
+
+            <div className="rounded-2xl border border-stone-200 bg-stone-50 p-5">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Saved email recipients</p>
+              <p className="mt-2 text-sm leading-7 text-stone-600">
+                This preview comes from the database: the saved profile owner plus barkada members marked as opted in.
+              </p>
+              <div className="mt-4 space-y-2">
+                {recipientPreview.length ? (
+                  recipientPreview.map((entry) => (
+                    <div
+                      key={entry.email}
+                      className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 md:flex-row md:items-center md:justify-between"
+                    >
+                      <p className="text-sm font-semibold text-stone-900">{entry.label}</p>
+                      <p className="text-xs uppercase tracking-[0.16em] text-stone-500">{entry.email}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-stone-500">No opted-in recipients yet. Save the profile and add barkada emails first.</p>
+                )}
+              </div>
+            </div>
           </div>
 
-          <button className="mt-8 rounded-xl bg-stone-900 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-white">
+          <button className="mt-8 rounded-xl bg-stone-900 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-white xl:mt-6 xl:shrink-0">
             Check with AI
           </button>
         </motion.form>
@@ -187,77 +343,96 @@ export default function AnalyzeAnnouncementPage({ user }) {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
-          className="rounded-3xl border border-stone-200 bg-white p-8 shadow-card"
+          className="rounded-3xl border border-stone-200 bg-white p-8 shadow-card xl:flex xl:h-[calc(100vh-12rem)] xl:min-h-[760px] xl:flex-col xl:overflow-hidden"
         >
           <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">AI result</p>
-          {!result ? (
-            <>
-              <h2 className="mt-4 font-display text-5xl leading-none text-stone-900">
-                The AI verdict will appear here.
-              </h2>
-              <p className="mt-4 text-sm leading-7 text-stone-600">
-                This panel is intentionally simple so the AI is the focus. After checking, you will see the verdict, confidence, relevance, and the final alert message here.
-              </p>
-            </>
-          ) : (
-            <>
-              <h2 className="mt-4 font-display text-5xl leading-none text-stone-900">
-                {result.analysis.isClassSuspension ? "AI says this looks like class suspension." : "AI says this is not a class suspension notice."}
-              </h2>
-              <div className="mt-6 grid gap-4 md:grid-cols-2">
-                <div className="rounded-2xl border border-stone-200 bg-stone-50 p-5">
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Confidence</p>
-                  <p className="mt-2 text-3xl font-semibold text-stone-900">{result.analysis.confidenceScore}%</p>
+          <div className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-2">
+            {!result ? (
+              <>
+                <h2 className="mt-4 font-display text-5xl leading-none text-stone-900">
+                  The AI verdict will appear here.
+                </h2>
+                <p className="mt-4 text-sm leading-7 text-stone-600">
+                  This panel is intentionally simple so the AI is the focus. After checking, you will see the verdict, confidence, relevance, and the final alert message here.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 className="mt-4 font-display text-5xl leading-none text-stone-900">
+                  {result.analysis.isClassSuspension ? "AI says this looks like class suspension." : "AI says this is not a class suspension notice."}
+                </h2>
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl border border-stone-200 bg-stone-50 p-5">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Confidence</p>
+                    <p className="mt-2 text-3xl font-semibold text-stone-900">{result.analysis.confidenceScore}%</p>
+                  </div>
+                  <div className="rounded-2xl border border-stone-200 bg-stone-50 p-5">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Alert level</p>
+                    <p className="mt-2 text-3xl font-semibold text-stone-900">{result.analysis.alertLevel}</p>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-stone-200 bg-stone-50 p-5">
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Alert level</p>
-                  <p className="mt-2 text-3xl font-semibold text-stone-900">{result.analysis.alertLevel}</p>
+
+                <div className="mt-4 rounded-2xl border border-lime-300 bg-lime-100 p-5">
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-600">AI message</p>
+                  <p className="mt-3 text-lg leading-8 text-stone-900">{result.analysis.alertMessage}</p>
                 </div>
-              </div>
 
-              <div className="mt-4 rounded-2xl border border-lime-300 bg-lime-100 p-5">
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-600">AI message</p>
-                <p className="mt-3 text-lg leading-8 text-stone-900">{result.analysis.alertMessage}</p>
-              </div>
+                {result.analysis.attendanceAdvice ? (
+                  <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-5">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-600">Commute advice</p>
+                    <p className="mt-3 text-lg leading-8 text-stone-900">{result.analysis.attendanceAdvice}</p>
+                    {result.analysis.classContinuityMode &&
+                    result.analysis.classContinuityMode !== "suspended" &&
+                    result.analysis.classContinuityMode !== "none" ? (
+                      <p className="mt-2 text-sm leading-7 text-stone-700">
+                        Learning mode detected:{" "}
+                        <span className="font-semibold capitalize text-stone-900">
+                          {result.analysis.classContinuityMode.replace("_", " ")}
+                        </span>
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
 
-              <div className="mt-4 rounded-2xl border border-stone-200 bg-stone-50 p-5">
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Why the AI decided this</p>
-                <p className="mt-3 text-sm leading-7 text-stone-700">{result.analysis.summaryForStudent}</p>
-                <p className="mt-2 text-sm leading-7 text-stone-600">{result.analysis.whyRelevant}</p>
-              </div>
+                <div className="mt-4 rounded-2xl border border-stone-200 bg-stone-50 p-5">
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Why the AI decided this</p>
+                  <p className="mt-3 text-sm leading-7 text-stone-700">{result.analysis.summaryForStudent}</p>
+                  <p className="mt-2 text-sm leading-7 text-stone-600">{result.analysis.whyRelevant}</p>
+                </div>
 
-              <div className="mt-6">
-                <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">Vote if needed</p>
-                <div className="mt-3 flex flex-wrap gap-3">
+                <div className="mt-6">
+                  <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">Vote if needed</p>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      onClick={() => handleVote("legit")}
+                      className="rounded-xl bg-stone-900 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white"
+                    >
+                      Vote Legit
+                    </button>
+                    <button
+                      onClick={() => handleVote("fake")}
+                      className="rounded-xl border border-stone-300 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-stone-800"
+                    >
+                      Vote Fake
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-6">
+                  <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">Final action</p>
                   <button
-                    onClick={() => handleVote("legit")}
-                    className="rounded-xl bg-stone-900 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white"
+                    onClick={() => setShowAlertModal(true)}
+                    disabled={!canAlertEveryone}
+                    className="mt-3 rounded-xl bg-lime-300 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-stone-900 disabled:opacity-50"
                   >
-                    Vote Legit
-                  </button>
-                  <button
-                    onClick={() => handleVote("fake")}
-                    className="rounded-xl border border-stone-300 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-stone-800"
-                  >
-                    Vote Fake
+                    Alert Everybody
                   </button>
                 </div>
-              </div>
+              </>
+            )}
 
-              <div className="mt-6">
-                <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">Final action</p>
-                <button
-                  onClick={() => setShowAlertModal(true)}
-                  disabled={!canAlertEveryone}
-                  className="mt-3 rounded-xl bg-lime-300 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-stone-900 disabled:opacity-50"
-                >
-                  Alert Everybody
-                </button>
-              </div>
-            </>
-          )}
-
-          {status ? <p className="mt-6 text-sm font-semibold text-stone-700">{status}</p> : null}
+            {status ? <p className="mt-6 text-sm font-semibold text-stone-700">{status}</p> : null}
+          </div>
         </motion.div>
       </div>
 
@@ -311,9 +486,12 @@ export default function AnalyzeAnnouncementPage({ user }) {
               <div className="mt-6 rounded-2xl border border-stone-200 bg-stone-50 p-5">
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Summary</p>
                 <p className="mt-3 text-sm leading-7 text-stone-700">
-                  The barkada gets the first email immediately. Reminders then continue for{" "}
+                  The barkada gets the first email immediately. Browser and sound reminders then continue for{" "}
                   <span className="font-semibold text-stone-900">{alertSettings.maxMinutes} minute(s)</span>, repeating every{" "}
                   <span className="font-semibold text-stone-900">{alertSettings.repeatSeconds} seconds</span>.
+                </p>
+                <p className="mt-3 text-sm leading-7 text-stone-600">
+                  Email targets right now: <span className="font-semibold text-stone-900">{recipientPreview.length}</span> saved recipient(s).
                 </p>
               </div>
 

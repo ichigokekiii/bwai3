@@ -115,14 +115,25 @@ async function initDatabase() {
       await connection.query(statement);
     }
 
-    await connection.query(
-      `ALTER TABLE alerts
-       ADD COLUMN IF NOT EXISTS repeat_seconds INT NOT NULL DEFAULT 30`
+    const [repeatSecondsColumn] = await connection.query(
+      `SHOW COLUMNS FROM alerts LIKE 'repeat_seconds'`
     );
-    await connection.query(
-      `ALTER TABLE alerts
-       ADD COLUMN IF NOT EXISTS max_minutes INT NOT NULL DEFAULT 5`
+    if (!repeatSecondsColumn.length) {
+      await connection.query(
+        `ALTER TABLE alerts
+         ADD COLUMN repeat_seconds INT NOT NULL DEFAULT 30`
+      );
+    }
+
+    const [maxMinutesColumn] = await connection.query(
+      `SHOW COLUMNS FROM alerts LIKE 'max_minutes'`
     );
+    if (!maxMinutesColumn.length) {
+      await connection.query(
+        `ALTER TABLE alerts
+         ADD COLUMN max_minutes INT NOT NULL DEFAULT 5`
+      );
+    }
   } finally {
     connection.release();
   }

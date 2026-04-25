@@ -14,6 +14,10 @@ async function createGroup(req, res, next) {
     const [group] = await query("SELECT * FROM `groups` WHERE id = ?", [result.insertId]);
     res.status(201).json(group);
   } catch (error) {
+    if (error.code === "ER_DUP_ENTRY") {
+      error.status = 409;
+      error.message = "That barkada group name already exists for this user.";
+    }
     next(error);
   }
 }
@@ -55,6 +59,10 @@ async function addGroupMember(req, res, next) {
     const [member] = await query("SELECT * FROM group_members WHERE id = ?", [result.insertId]);
     res.status(201).json(member);
   } catch (error) {
+    if (error.code === "ER_DUP_ENTRY") {
+      error.status = 409;
+      error.message = "That email is already added to this barkada group.";
+    }
     next(error);
   }
 }

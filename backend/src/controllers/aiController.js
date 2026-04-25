@@ -1,9 +1,9 @@
 const { query } = require("../config/db");
-const { analyzeAnnouncement } = require("../services/aiService");
+const { analyzeAnnouncement, extractTextFromImage } = require("../services/aiService");
 
 async function analyzeAnnouncementController(req, res, next) {
   try {
-    const { userId, announcementText, sourceName, sourceUrl, sourceType } = req.body;
+    const { userId, announcementText, sourceName, sourceUrl, sourceType, imageBase64, imageMimeType } = req.body;
     const [user] = await query("SELECT * FROM users WHERE id = ?", [userId]);
 
     if (!user) {
@@ -27,7 +27,9 @@ async function analyzeAnnouncementController(req, res, next) {
       announcementText,
       sourceName,
       sourceUrl,
-      sourceType
+      sourceType,
+      imageBase64,
+      imageMimeType
     });
 
     const analysisResult = await query(
@@ -85,6 +87,26 @@ async function analyzeAnnouncementController(req, res, next) {
   }
 }
 
+async function extractImageTextController(req, res, next) {
+  try {
+    const { imageBase64, imageMimeType } = req.body;
+
+    if (!imageBase64 || !imageMimeType) {
+      return res.status(400).json({ message: "Image data is required." });
+    }
+
+    const result = await extractTextFromImage({
+      imageBase64,
+      imageMimeType
+    });
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
-  analyzeAnnouncementController
+  analyzeAnnouncementController,
+  extractImageTextController
 };
