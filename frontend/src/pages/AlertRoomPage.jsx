@@ -61,7 +61,7 @@ export default function AlertRoomPage({ user }) {
             title: "Panic follow-up",
             body: "Someone please acknowledge the alert before commute mode activates."
           });
-        }, 30000);
+        }, Number(alert.repeat_seconds || 30) * 1000);
       }
       startAlarmLoop();
     }
@@ -83,7 +83,8 @@ export default function AlertRoomPage({ user }) {
       return "00:00";
     }
 
-    const end = new Date(alert.started_at).getTime() + 5 * 60 * 1000;
+    const end =
+      new Date(alert.started_at).getTime() + Number(alert.max_minutes || 5) * 60 * 1000;
     const diff = Math.max(0, end - Date.now());
     const minutes = String(Math.floor(diff / 60000)).padStart(2, "0");
     const seconds = String(Math.floor((diff % 60000) / 1000)).padStart(2, "0");
@@ -135,7 +136,9 @@ export default function AlertRoomPage({ user }) {
           <div className="space-y-3 rounded-[1.8rem] border border-stone-200 bg-stone-50/90 px-5 py-4">
             <AlertLevelBadge level={alert.alert_level} />
             <p className="text-sm text-stone-600">Countdown: {countdown}</p>
-            <p className="text-xs uppercase tracking-[0.2em] text-stone-500">Legend: alert auto-stops after the max duration.</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-stone-500">
+              Legend: repeats every {alert.repeat_seconds || 30}s and auto-stops after {alert.max_minutes || 5} min.
+            </p>
           </div>
         </div>
       </motion.div>

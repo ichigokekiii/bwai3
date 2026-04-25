@@ -2,9 +2,12 @@ const { getConnection, query } = require("../config/db");
 const { sendAlertEmail } = require("./emailService");
 
 async function expireAlerts({ alertId, userId } = {}) {
-  const maxMinutes = Number(process.env.ALERT_MAX_MINUTES || 5);
-  const clauses = ["status = 'active'", "TIMESTAMPDIFF(MINUTE, started_at, NOW()) >= ?"];
-  const params = [maxMinutes];
+  const defaultMaxMinutes = Number(process.env.ALERT_MAX_MINUTES || 5);
+  const clauses = [
+    "status = 'active'",
+    "TIMESTAMPDIFF(MINUTE, started_at, NOW()) >= COALESCE(max_minutes, ?)"
+  ];
+  const params = [defaultMaxMinutes];
 
   if (alertId) {
     clauses.push("id = ?");
@@ -91,7 +94,14 @@ function mapAnalysisRecord(record) {
   };
 }
 
-async function startAlertWorkflow({ userId, announcementId, groupId, alertLevel }) {
+async function startAlertWorkflow({
+  userId,
+  announcementId,
+  groupId,
+  alertLevel,
+  repeatSeconds,
+  maxMinutes
+}) {
   const analysisRecord = await getAnalysisByAnnouncementId(announcementId, userId);
 
   if (!analysisRecord) {
@@ -101,6 +111,8 @@ async function startAlertWorkflow({ userId, announcementId, groupId, alertLevel 
   const analysis = mapAnalysisRecord(analysisRecord);
   const shouldNotifyGroup =
     alertLevel === "panic" && analysis.confidenceScore >= 60 && Boolean(groupId);
+  const safeRepeatSeconds = Math.max(15, Number(repeatSeconds || process.env.ALERT_REPEAT_SECONDS || 30));
+  const safeMaxMinutes = Math.max(1, Math.min(10, Number(maxMinutes || process.env.ALERT_MAX_MINUTES || 5)));
 
   if (analysis.confidenceScore < 60 && groupId && alertLevel === "panic") {
     throw new Error("Low confidence announcements cannot trigger automatic barkada panic alerts.");
@@ -112,9 +124,16 @@ async function startAlertWorkflow({ userId, announcementId, groupId, alertLevel 
     await connection.beginTransaction();
 
     const [alertResult] = await connection.execute(
-      `INSERT INTO alerts (user_id, announcement_id, group_id, alert_level, status)
-       VALUES (?, ?, ?, ?, 'active')`,
-      [userId, announcementId, groupId || null, alertLevel]
+      `INSERT INTO alerts (
+        user_id,
+        announcement_id,
+        group_id,
+        alert_level,
+        repeat_seconds,
+        max_minutes,
+        status
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+      [userId, announcementId, groupId || null, alertLevel, safeRepeatSeconds, safeMaxMinutes]
     );
 
     const alertId = alertResult.insertId;
@@ -185,8 +204,8 @@ async function startAlertWorkflow({ userId, announcementId, groupId, alertLevel 
       alertLevel,
       shouldNotifyGroup,
       recipients: sentRecipients,
-      repeatSeconds: Number(process.env.ALERT_REPEAT_SECONDS || 30),
-      maxMinutes: Number(process.env.ALERT_MAX_MINUTES || 5)
+      repeatSeconds: safeRepeatSeconds,
+      maxMinutes: safeMaxMinutes
     };
   } catch (error) {
     await connection.rollback();

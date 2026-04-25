@@ -79,6 +79,8 @@ CREATE TABLE IF NOT EXISTS alerts (
   announcement_id INT NOT NULL,
   group_id INT NULL,
   alert_level VARCHAR(50) NOT NULL,
+  repeat_seconds INT NOT NULL DEFAULT 30,
+  max_minutes INT NOT NULL DEFAULT 5,
   status VARCHAR(50) NOT NULL DEFAULT 'active',
   started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   stopped_at TIMESTAMP NULL,

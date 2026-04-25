@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { analyzeAnnouncement, createVote, getUserGroups, startAlert } from "../services/api";
 
 const demoAnnouncement =
   "Due to continuous heavy rainfall, classes in all levels, public and private schools in the City of Manila are suspended today.";
+const durationOptions = [
+  { label: "1 minute", value: 1 },
+  { label: "3 minutes", value: 3 },
+  { label: "5 minutes", value: 5 }
+];
 
 export default function AnalyzeAnnouncementPage({ user }) {
   const [groups, setGroups] = useState([]);
@@ -17,6 +22,11 @@ export default function AnalyzeAnnouncementPage({ user }) {
   });
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("");
+  const [showAlertModal, setShowAlertModal] = useState(false);
+  const [alertSettings, setAlertSettings] = useState({
+    maxMinutes: 5,
+    repeatSeconds: 30
+  });
 
   useEffect(() => {
     if (!user?.id) return;
@@ -62,10 +72,15 @@ export default function AnalyzeAnnouncementPage({ user }) {
       userId: user.id,
       announcementId: result.announcementId,
       groupId: groups[0]?.id || null,
-      alertLevel: result.analysis.alertLevel
+      alertLevel: result.analysis.alertLevel,
+      repeatSeconds: alertSettings.repeatSeconds,
+      maxMinutes: alertSettings.maxMinutes
     });
 
-    setStatus(`Alert #${data.alertId} sent.`);
+    setShowAlertModal(false);
+    setStatus(
+      `Alert #${data.alertId} sent. Reminders repeat every ${data.repeatSeconds} seconds for up to ${data.maxMinutes} minute(s).`
+    );
   }
 
   if (!user) {
@@ -210,7 +225,7 @@ export default function AnalyzeAnnouncementPage({ user }) {
               <div className="mt-6">
                 <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">Final action</p>
                 <button
-                  onClick={handleAlertEverybody}
+                  onClick={() => setShowAlertModal(true)}
                   disabled={!canAlertEveryone}
                   className="mt-3 rounded-xl bg-lime-300 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-stone-900 disabled:opacity-50"
                 >
@@ -223,6 +238,81 @@ export default function AnalyzeAnnouncementPage({ user }) {
           {status ? <p className="mt-6 text-sm font-semibold text-stone-700">{status}</p> : null}
         </motion.div>
       </div>
+
+      <AnimatePresence>
+        {showAlertModal ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/35 px-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              className="w-full max-w-xl rounded-3xl border border-stone-200 bg-white p-8 shadow-card"
+            >
+              <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">Alert everybody</p>
+              <h2 className="mt-4 font-display text-5xl leading-none text-stone-900">
+                Choose how long panic mode should stay active.
+              </h2>
+              <p className="mt-4 text-sm leading-7 text-stone-600">
+                Emails send immediately one time to avoid spam. Browser and sound reminders repeat every{" "}
+                <span className="font-semibold text-stone-900">{alertSettings.repeatSeconds} seconds</span> until someone acknowledges or the selected duration ends.
+              </p>
+
+              <div className="mt-6">
+                <p className="text-sm font-semibold text-stone-800">Alert duration</p>
+                <div className="mt-3 flex flex-wrap gap-3">
+                  {durationOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() =>
+                        setAlertSettings((current) => ({
+                          ...current,
+                          maxMinutes: option.value
+                        }))
+                      }
+                      className={`rounded-xl px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] transition ${
+                        alertSettings.maxMinutes === option.value
+                          ? "bg-stone-900 text-white"
+                          : "border border-stone-300 bg-white text-stone-800"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-stone-200 bg-stone-50 p-5">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-500">Summary</p>
+                <p className="mt-3 text-sm leading-7 text-stone-700">
+                  The barkada gets the first email immediately. Reminders then continue for{" "}
+                  <span className="font-semibold text-stone-900">{alertSettings.maxMinutes} minute(s)</span>, repeating every{" "}
+                  <span className="font-semibold text-stone-900">{alertSettings.repeatSeconds} seconds</span>.
+                </p>
+              </div>
+
+              <div className="mt-8 flex flex-wrap gap-3">
+                <button
+                  onClick={handleAlertEverybody}
+                  className="rounded-xl bg-lime-300 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-stone-900"
+                >
+                  Confirm Alert
+                </button>
+                <button
+                  onClick={() => setShowAlertModal(false)}
+                  className="rounded-xl border border-stone-300 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-stone-800"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
