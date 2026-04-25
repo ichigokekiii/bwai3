@@ -33,6 +33,7 @@ function getSmtpConfig() {
     port,
     user,
     pass,
+    encryption,
     from: from || (fromAddress ? `${fromName} <${fromAddress}>` : undefined),
     secure:
       secureFlag === "true" ||
@@ -58,18 +59,42 @@ function getTransporter() {
   }
 
   transporter = nodemailer.createTransport({
+    service: smtp.host && smtp.host.includes("gmail.com") ? "gmail" : undefined,
     host: smtp.host,
     port: smtp.port,
     secure: smtp.secure,
+    requireTLS: smtp.encryption === "tls",
     auth: smtp.user
       ? {
           user: smtp.user,
           pass: smtp.pass
         }
-      : undefined
+      : undefined,
+    tls: {
+      minVersion: "TLSv1.2"
+    }
   });
 
   return transporter;
+}
+
+async function verifyEmailTransport() {
+  const transport = getEmailTransport();
+  const smtp = getSmtpConfig();
+
+  if (transport === "mock" || !smtp.host) {
+    return {
+      ok: true,
+      mode: "mock"
+    };
+  }
+
+  await getTransporter().verify();
+
+  return {
+    ok: true,
+    mode: transport
+  };
 }
 
 function buildAlertEmail({ recipientName, analysis, alertLevel, alertUrl }) {
@@ -150,11 +175,14 @@ async function sendAlertEmail({
   return {
     transport: getEmailTransport(),
     messageId: info.messageId || "mock-message",
+    accepted: info.accepted || [],
+    rejected: info.rejected || [],
     preview: info.message || null,
     alertUrl
   };
 }
 
 module.exports = {
-  sendAlertEmail
+  sendAlertEmail,
+  verifyEmailTransport
 };

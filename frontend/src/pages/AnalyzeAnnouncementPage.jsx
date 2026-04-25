@@ -23,6 +23,7 @@ export default function AnalyzeAnnouncementPage({ user }) {
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("");
   const [showAlertModal, setShowAlertModal] = useState(false);
+  const [resultModal, setResultModal] = useState(null);
   const [alertSettings, setAlertSettings] = useState({
     maxMinutes: 5,
     repeatSeconds: 30
@@ -67,20 +68,41 @@ export default function AnalyzeAnnouncementPage({ user }) {
 
   async function handleAlertEverybody() {
     if (!result) return;
+    try {
+      const data = await startAlert({
+        userId: user.id,
+        announcementId: result.announcementId,
+        groupId: groups[0]?.id || null,
+        alertLevel: result.analysis.alertLevel,
+        repeatSeconds: alertSettings.repeatSeconds,
+        maxMinutes: alertSettings.maxMinutes
+      });
 
-    const data = await startAlert({
-      userId: user.id,
-      announcementId: result.announcementId,
-      groupId: groups[0]?.id || null,
-      alertLevel: result.analysis.alertLevel,
-      repeatSeconds: alertSettings.repeatSeconds,
-      maxMinutes: alertSettings.maxMinutes
-    });
-
-    setShowAlertModal(false);
-    setStatus(
-      `Alert #${data.alertId} sent. Reminders repeat every ${data.repeatSeconds} seconds for up to ${data.maxMinutes} minute(s).`
-    );
+      setShowAlertModal(false);
+      setStatus(
+        `Alert #${data.alertId} sent. Reminders repeat every ${data.repeatSeconds} seconds for up to ${data.maxMinutes} minute(s).`
+      );
+      setResultModal({
+        type: data.deliveryStatus === "partial_success" ? "success" : "success",
+        title: data.deliveryStatus === "partial_success" ? "Alert sent with some delivery issues" : "Alert sent successfully",
+        body:
+          data.deliveryStatus === "partial_success"
+            ? `At least ${data.sentCount} email(s) were accepted, but ${data.failedCount} failed. Check recipient statuses in the alert room.`
+            : `Email delivery was accepted for ${data.sentCount} recipient(s). Reminders will continue for ${data.maxMinutes} minute(s).`
+      });
+    } catch (error) {
+      console.error(error);
+      setShowAlertModal(false);
+      setStatus(error.response?.data?.message || "Alert failed.");
+      setResultModal({
+        type: "error",
+        title: "Alert failed",
+        body:
+          error.response?.data?.message ||
+          error.message ||
+          "No email was delivered. Check your SMTP settings and try again."
+      });
+    }
   }
 
   if (!user) {
@@ -307,6 +329,44 @@ export default function AnalyzeAnnouncementPage({ user }) {
                   className="rounded-xl border border-stone-300 px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] text-stone-800"
                 >
                   Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {resultModal ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-900/35 px-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              className="w-full max-w-lg rounded-3xl border border-stone-200 bg-white p-8 shadow-card"
+            >
+              <p className="text-sm font-bold uppercase tracking-[0.22em] text-stone-500">
+                {resultModal.type === "error" ? "Alert result" : "Success"}
+              </p>
+              <h2 className="mt-4 font-display text-5xl leading-none text-stone-900">
+                {resultModal.title}
+              </h2>
+              <p className="mt-4 text-sm leading-7 text-stone-600">{resultModal.body}</p>
+              <div className="mt-8">
+                <button
+                  onClick={() => setResultModal(null)}
+                  className={`rounded-xl px-6 py-4 text-sm font-bold uppercase tracking-[0.18em] ${
+                    resultModal.type === "error"
+                      ? "bg-stone-900 text-white"
+                      : "bg-lime-300 text-stone-900"
+                  }`}
+                >
+                  Close
                 </button>
               </div>
             </motion.div>

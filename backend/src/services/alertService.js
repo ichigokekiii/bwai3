@@ -1,5 +1,5 @@
 const { getConnection, query } = require("../config/db");
-const { sendAlertEmail } = require("./emailService");
+const { sendAlertEmail, verifyEmailTransport } = require("./emailService");
 
 async function expireAlerts({ alertId, userId } = {}) {
   const defaultMaxMinutes = Number(process.env.ALERT_MAX_MINUTES || 5);
@@ -94,6 +94,30 @@ function mapAnalysisRecord(record) {
   };
 }
 
+function formatDeliveryError(error) {
+  const parts = [];
+
+  if (error?.message) {
+    parts.push(error.message);
+  }
+
+  if (error?.code) {
+    parts.push(`Code: ${error.code}`);
+  }
+
+  if (error?.response) {
+    parts.push(`Provider response: ${error.response}`);
+  }
+
+  const detail = parts.filter(Boolean).join(" | ");
+
+  if (!detail) {
+    return "Email delivery failed. Check your SMTP configuration and try again.";
+  }
+
+  return `Email delivery failed. ${detail}`;
+}
+
 async function startAlertWorkflow({
   userId,
   announcementId,
@@ -119,6 +143,7 @@ async function startAlertWorkflow({
   }
 
   const connection = await getConnection();
+  let committed = false;
 
   try {
     await connection.beginTransaction();
@@ -159,8 +184,19 @@ async function startAlertWorkflow({
     }
 
     await connection.commit();
+    committed = true;
+
+    try {
+      await verifyEmailTransport();
+    } catch (error) {
+      const smtpError = new Error(formatDeliveryError(error));
+      smtpError.status = 502;
+      throw smtpError;
+    }
 
     const sentRecipients = [];
+    let sentCount = 0;
+    let failedCount = 0;
     for (const recipient of recipients) {
       try {
         const emailResult = await sendAlertEmail({
@@ -181,9 +217,12 @@ async function startAlertWorkflow({
         sentRecipients.push({
           ...recipient,
           status: "sent",
-          alertUrl: emailResult.alertUrl
+          alertUrl: emailResult.alertUrl,
+          accepted: emailResult.accepted
         });
+        sentCount += 1;
       } catch (error) {
+        const formattedError = formatDeliveryError(error);
         await query(
           `UPDATE alert_recipients
            SET status = 'failed'
@@ -194,9 +233,18 @@ async function startAlertWorkflow({
         sentRecipients.push({
           ...recipient,
           status: "failed",
-          error: error.message
+          error: formattedError
         });
+        failedCount += 1;
       }
+    }
+
+    if (recipients.length > 0 && sentCount === 0) {
+      const error = new Error(
+        sentRecipients[0]?.error || "All email deliveries failed. Check SMTP configuration and recipient addresses."
+      );
+      error.status = 502;
+      throw error;
     }
 
     return {
@@ -204,11 +252,16 @@ async function startAlertWorkflow({
       alertLevel,
       shouldNotifyGroup,
       recipients: sentRecipients,
+      sentCount,
+      failedCount,
+      deliveryStatus: failedCount > 0 ? "partial_success" : "success",
       repeatSeconds: safeRepeatSeconds,
       maxMinutes: safeMaxMinutes
     };
   } catch (error) {
-    await connection.rollback();
+    if (!committed) {
+      await connection.rollback();
+    }
     throw error;
   } finally {
     connection.release();
